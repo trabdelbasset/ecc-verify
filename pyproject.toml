@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecc-verify"
+dynamic = ["version"]
+description = "Independent verification harness for the ECC RTL-to-GDS flow: recomputes artifacts, gates CI against a baseline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []                     # the checks only need the standard library
+keywords = ["eda", "verification", "rtl-to-gds", "ecc", "ci"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+
+[project.optional-dependencies]
+gds = ["klayout"]                     # L3.gds checks (otherwise run through `uv run --with klayout`)
+test = ["pytest"]
+
+[project.scripts]
+ecc-verify = "ecc_verify.__main__:main"
+
+[tool.setuptools]
+packages = ["ecc_verify", "ecc_verify.checks", "ecc_verify.parsers", "ecc_verify.tools", "ecc_verify.vendor"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ecc_verify.__version__" }
+
+[tool.setuptools.package-data]
+ecc_verify = ["data/*.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"

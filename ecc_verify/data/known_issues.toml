@@ -1,0 +1,61 @@
+# Known issues of ECC found by ecc-verify (nightly v0.1.0-nightly.20261107, build 0da4cdb, 14 CI designs).
+# Check ids map to BUG ids of the ECC evaluation register (docs/03_bugs_and_issues.md of the evaluation).
+# A FAIL covered by an entry is KNOWN, not NEW: it never turns the exit code to 1. Remove an entry once the bug is fixed;
+# `ecc-verify compare` lists entries that no longer match a failing result as "fixed / stale".
+#
+# [[known]]
+#   check   = id, glob or list of them        designs = optional list (default: every design; global checks are "<global>")
+#   bugs    = ["BUG-nn", ...]                  note    = free text
+
+[[known]]
+check = "L3.sta.drv_clean"
+designs = ["aes", "BM64", "Bstage-rv32e-64B-icache", "Cstage-rv32e-axi", "Dstage-rv32e", "picorv32a", "y_huff"]
+bugs = ["BUG-02"]
+note = "max_transition / max_capacitance VIOLATED rows at MAX_125/Cworst; no DRV gate exists in the QoR gates or the signoff checklist"
+
+[[known]]
+check = ["L3.so.antenna_effective", "L3.so.checklist_vs_reality"]
+bugs = ["BUG-03"]
+note = "antenna check is vacuous with the shipped PDK LEFs (no ANTENNA* rules: signal_net_count = 0) yet reports Success and the checklist passes"
+
+[[known]]
+check = "L3.gds.std_cells_resolved"
+bugs = ["BUG-01"]
+note = "final GDS has only MET/VIA layers: no ACT/NW/POLY, std-cell FEOL is not merged"
+
+[[known]]
+check = "L3.cts.fanout_limit"
+bugs = ["BUG-10"]
+note = "cts.max_fanout is silently overridden by ECC's generated SDC (32); leaf clock nets exceed the configured 6 or 8"
+
+[[known]]
+check = "L3.pl.util_growth"
+designs = ["xtea"]
+bugs = ["BUG-11"]
+note = "timing_optimization_sizer grows std-cell area x1.87 (core utilization 0.45 -> 0.85) after legalization failures"
+
+[[known]]
+check = "L5.relocate_status"
+bugs = ["BUG-22"]
+note = "projects are not relocatable: an unmodified copy of a finished project gives manifest_invalid (absolute paths in project.json)"
+
+[[known]]
+check = "L5.relocate"
+bugs = ["BUG-22"]
+note = "slow variant of L5.relocate_status"
+
+[[known]]
+check = "L5.fault_injection"
+bugs = ["BUG-05", "BUG-06", "BUG-07", "BUG-17", "BUG-18", "BUG-19", "BUG-20"]
+note = "14 of 44 faults expose defects (V07-V11, T01-T02, A02-A05, C06, L01-L03) and gaps G01-G03 stay open; new_vs_reference in the check details flags regressions"
+
+# --- slow layers (run with --slow) -------------------------------------------------------------------------------------
+[[known]]
+check = "L5.chaos_kill_resume"
+bugs = ["BUG-08"]
+note = "stale runtime lock after SIGTERM blocks a plain `ecc run --resume` (rc 20, 'Workspace already has a runtime process')"
+
+[[known]]
+check = "L4.resume_equivalence"
+bugs = ["BUG-09"]
+note = "a bounded run (`--to`) permanently truncates the workspace; `--resume` is a no-op"

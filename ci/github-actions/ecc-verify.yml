@@ -1,0 +1,109 @@
+# Example workflow: copy to <ecc repo>/.github/workflows/ecc-verify.yml and adapt the marked lines.
+# See ci/github-actions/README.md.
+name: ecc-verify
+
+on:
+  pull_request:
+    paths: ["src/**", "ecc/**", "nix/**", "pyproject.toml"]      # ADAPT: paths that can change flow results
+  schedule:
+    - cron: "0 2 * * *"                                           # nightly: all designs + slow layers
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "run all designs and the slow layers"
+        type: boolean
+        default: false
+
+env:
+  ECC_VERIFY_REPO: <org>/ecc-verify              # ADAPT
+  ECC_VERIFY_REF: v2.0.0                         # pin a tag or commit
+  DESIGNS_REPO: <org>/ecc-ci-designs             # ADAPT
+  BASELINE_REPO: <org>/ecc-verify-baselines      # a plain git repo holding the `ecc-verify baseline export` output
+  PR_DESIGNS: xtea gcd_icg Fstage-scpu usb zipdiv
+
+jobs:
+  verify:
+    runs-on: [self-hosted, ecc-16core]           # ADAPT: ecc needs pinned CPUs; use a dedicated runner
+    timeout-minutes: ${{ (github.event_name == 'schedule' || inputs.full) && 300 || 90 }}
+    env:
+      FULL: ${{ (github.event_name == 'schedule' || inputs.full) && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.ECC_VERIFY_REPO }}", ref: "${{ env.ECC_VERIFY_REF }}", path: .ecc-verify }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.DESIGNS_REPO }}", path: .ecc-ci-designs }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.BASELINE_REPO }}", path: .ecc-verify-baselines }
+
+      - name: Build / install ecc
+        run: |
+          # ADAPT: produce the ecc binary under test (nix build, uv tool install, a nightly tarball ...)
+          echo "ECC=$(command -v ecc)" >> "$GITHUB_ENV"
+
+      - name: Run designs and verify
+        id: verify
+        run: |
+          set +e
+          if [ -n "$FULL" ]; then
+            designs=(); extra=(--slow --workers 6)                # nightly: all designs (14), static + slow layers
+          else
+            designs=(); for d in $PR_DESIGNS; do designs+=(--design "$d"); done
+            extra=(--layers L0,L1,L2,L3)                          # PR: five small designs, static layers only
+          fi
+          bash .ecc-verify/scripts/run_ci_designs.sh \
+            --ecc "$ECC" --designs-dir .ecc-ci-designs --out-root "$RUNNER_TEMP/e2e" \
+            --jobs 3 --cpus-per-job 4 --first-cpu 0 \
+            --baseline .ecc-verify-baselines "${designs[@]}" -- "${extra[@]}"
+          rc=$?
+          echo "exit=$rc" >> "$GITHUB_OUTPUT"
+          mkdir -p verify-out && cp -r "$RUNNER_TEMP"/e2e/verify/. verify-out/ 2>/dev/null
+          cp "$RUNNER_TEMP"/e2e/summary.txt verify-out/ 2>/dev/null
+          # exit codes of ecc-verify: 0 ok, 1 new FAIL / regression, 2 usage or infrastructure error
+          exit 0
+
+      - name: Job summary
+        if: always()
+        run: |
+          [ -f verify-out/compare.md ] && cat verify-out/compare.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload reports (JUnit, HTML, compare)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecc-verify-${{ github.run_id }}
+          path: verify-out
+          retention-days: 30
+
+      - name: Publish JUnit
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: verify-out/junit.xml
+          check_name: ecc-verify
+          fail_on_failure: false                  # known issues are FAILs in the raw JUnit; the gate is the exit code below
+
+      - name: Gate
+        if: always()
+        run: |
+          rc="${{ steps.verify.outputs.exit }}"
+          case "$rc" in
+            0) echo "ecc-verify: no new FAIL" ;;
+            1) echo "::error::ecc-verify found new FAILs or metric regressions (see compare.md)"; exit 1 ;;
+            *) echo "::error::ecc-verify infrastructure/usage error (exit $rc)"; exit 1 ;;
+          esac
+
+  # Nightly only: refresh the baseline proposal after a green run (review and commit it by hand or via a PR).
+  propose-baseline:
+    if: github.event_name == 'schedule' && needs.verify.result == 'success'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: "ecc-verify-${{ github.run_id }}", path: verify-out }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ env.ECC_VERIFY_REPO }}", ref: "${{ env.ECC_VERIFY_REF }}", path: .ecc-verify }
+      - run: |
+          PYTHONPATH=.ecc-verify python3 -m ecc_verify baseline export --results verify-out/results.json --out proposed-baseline
+      - uses: actions/upload-artifact@v4
+        with: { name: proposed-baseline, path: proposed-baseline }
